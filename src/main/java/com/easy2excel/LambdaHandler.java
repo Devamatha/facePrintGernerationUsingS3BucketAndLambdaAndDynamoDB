@@ -18,14 +18,11 @@ import com.amazonaws.services.rekognition.AmazonRekognition;
 import com.amazonaws.services.rekognition.AmazonRekognitionClientBuilder;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectInputStream;
+import com.amazonaws.services.rekognition.model.AmazonRekognitionException;
 import com.amazonaws.services.rekognition.model.DetectFacesRequest;
 import com.amazonaws.services.rekognition.model.DetectFacesResult;
-import com.amazonaws.services.rekognition.model.DetectLabelsRequest;
-import com.amazonaws.services.rekognition.model.DetectLabelsResult;
-import com.amazonaws.services.rekognition.model.Face;
 import com.amazonaws.services.rekognition.model.FaceDetail;
 import com.amazonaws.services.rekognition.model.Image;
-import com.amazonaws.services.rekognition.model.Label;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -76,24 +73,43 @@ public class LambdaHandler implements RequestHandler<S3Event, String> {
 			context.getLogger().log("BucketName ::: " + bucketName);
 			context.getLogger().log("objectKey ::: " + objectKey);
 
-            Image image = new Image().withBytes(ByteBuffer.wrap(imageBytes));
-            DetectFacesRequest request = new DetectFacesRequest().withImage(image);
-            DetectFacesResult result = rekognitionClient.detectFaces(request);
-            List<FaceDetail> faceDetails= result.getFaceDetails();
+			Image image = new Image().withBytes(ByteBuffer.wrap(imageBytes));
+			DetectFacesRequest request = new DetectFacesRequest().withImage(image);
+			DetectFacesResult result ;
+			  try {
+		            result = rekognitionClient.detectFaces(request);
+		        } catch (AmazonRekognitionException e) {
+		            logger.log("Error occurred while detecting faces: " + e.getMessage());
+		            continue; // Skip processing this image
+		        }
+			List<FaceDetail> faceDetails = result.getFaceDetails();
+			   if (faceDetails.isEmpty()) {
+				   context.getLogger().log("No faces detected in the image");
+		            continue; // Skip processing this image
+		        }
+
 
 			// 3. Store labels in DynamoDB
-            StringBuilder facePrintsBuilder = new StringBuilder();
-            for (FaceDetail  faceDetail: faceDetails) {
-                // Assuming you want to store face print details
-                facePrintsBuilder.append(faceDetail.toString()).append(", ");
-            }
-            String facePrints = facePrintsBuilder.toString();
+			StringBuilder facePrintsBuilder = new StringBuilder();
+			context.getLogger().log("StringBuilder ::: " + facePrintsBuilder);
 
-            Item item = new Item()
-                    .withPrimaryKey("RekognitionId", facePrints)
-                    .withString("FacePrintsName",objectKey );
-            table.putItem(item);
+			for (FaceDetail faceDetail : faceDetails) {
+				// Assuming you want to store face print details
+				facePrintsBuilder.append(faceDetail.toString()).append(", ");
 
+				context.getLogger().log("faceDetail ::: " + faceDetail);
+				context.getLogger().log("StringBuilder ::: " + facePrintsBuilder);
+
+			}
+			String facePrints = facePrintsBuilder.toString().trim();
+			context.getLogger().log("facePrints ::: " + facePrints + "---------example");
+			context.getLogger().log("item is started ::: " + "item");
+
+			Item item = new Item().withPrimaryKey("RekognitionId", facePrints).withString("FacePrintsName", objectKey);
+			table.putItem(item);
+
+			context.getLogger().log("item is ended ::: " + "item");
+			context.getLogger().log("Stored in DynamoDB ::: " + DYNAMODB_TABLE_NAME);
 
 			logger.log("Stored in DynamoDB: " + DYNAMODB_TABLE_NAME);
 		}
